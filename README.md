@@ -231,18 +231,17 @@ in a service file is inside that team's own namespace by construction.
 
 ## The state of this zone
 
-Transcribed from the Cloudflare export on 17 September 2026 and checked against
-the live API. **Not yet applied.** The plan is:
+Transcribed from the Cloudflare export on 17 September 2026 and **applied**:
 
 ```
-Plan: 15 to import, 0 to add, 15 to change, 0 to destroy
+Apply complete! Resources: 15 imported, 0 added, 15 changed, 0 destroyed.
 ```
 
-Every record is adopted rather than recreated, and the only field that changes on
-any of them is `comment` -- the `dns-operations: <file>` marker that tells anyone
-looking at the Cloudflare dashboard which file to edit instead. No DNS data
-moves. `terraform/imports.tf` holds the pairing, keyed by zone; drop this
-zone's entry once it has been applied, and the file when the last one goes.
+Every record was adopted rather than recreated, and the only field that changed
+on any of them was `comment` -- the `dns-operations: <file>` marker that tells
+anyone looking at the Cloudflare dashboard which file to edit instead. No DNS
+data moved: `dnsctl verify` confirms the delegation and DNSSEC state are
+untouched.
 
 Cloudflare holds 16 records this repository could manage. The sixteenth is
 deliberately left out:
