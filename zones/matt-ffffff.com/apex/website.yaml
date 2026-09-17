@@ -1,0 +1,20 @@
+# The website: the apex itself and www.
+#
+# Cancelling the website means deleting this file. The apex A records are the
+# origin addresses; because `proxied: true`, the public answer is a Cloudflare
+# address, not these.
+
+records:
+  - name: "@"
+    type: A
+    values:
+      - 13.248.213.45
+      - 76.223.67.189
+    proxied: true
+
+  # www is a CNAME onto the apex. It is left unproxied, so Cloudflare answers it
+  # by flattening the CNAME to the origin addresses above.
+  - name: www
+    type: CNAME
+    values: ["matt-ffffff.com"]
+    proxied: false

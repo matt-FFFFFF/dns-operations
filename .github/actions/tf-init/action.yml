@@ -1,0 +1,36 @@
+name: tf-init
+description: Point Terraform at one zone's state file.
+
+# The zone and its state are chosen by the same string, here, once. Planning
+# one zone while holding another zone's state would plan to delete every
+# record in both, so the two must never be set apart from each other.
+
+inputs:
+  zone:
+    description: The zone directory under zones/.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # A missing credential must stop the job. A plan that never ran still
+    # reports a green tick, which is worse than a red one.
+    - shell: bash
+      run: |
+        missing=()
+        [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || missing+=(CLOUDFLARE_API_TOKEN)
+        [ -n "${ARM_CLIENT_ID:-}" ]        || missing+=(ARM_CLIENT_ID)
+        [ -n "${ARM_TENANT_ID:-}" ]        || missing+=(ARM_TENANT_ID)
+        [ -n "${ARM_SUBSCRIPTION_ID:-}" ]  || missing+=(ARM_SUBSCRIPTION_ID)
+        if [ ${#missing[@]} -gt 0 ]; then
+          echo "::error::not set: ${missing[*]}. See docs/ci.md." >&2
+          exit 1
+        fi
+
+    - shell: bash
+      env:
+        ZONE: ${{ inputs.zone }}
+      run: |
+        terraform -chdir=terraform init -input=false -reconfigure \
+          -backend-config=backend/azurerm.hcl \
+          -backend-config="key=zones/${ZONE}.tfstate"

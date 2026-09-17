@@ -1,0 +1,53 @@
+# GitHub uses the LAST pattern that matches, not the most specific one.
+#
+# apex/, validations/ and services/ sit at the same level and none is inside
+# another, so no pattern below overlaps another pattern and the order of these
+# lines cannot change who approves a path. The only ordering rule is that the
+# catch-all comes first.
+#
+# This file is a document, not a control, unless the default branch requires a
+# review from code owners, dismisses stale approvals on a push, and makes no
+# exception for administrators. See docs/branch-protection.md.
+#
+# Every line names the same account, because that is the truth of a one-person
+# repository -- GitHub will not let anyone approve their own pull request, so
+# requiring code-owner review here would lock the only owner out. The three
+# tiers below are kept as structure: they are what an organisation maps to
+# @org/dns-critical-approvers, @org/dns-service-approvers and each owning team,
+# and turning on `require_code_owner_reviews` is the first thing to do when a
+# second person arrives.
+
+*                                          @matt-FFFFFF
+
+/terraform/                                @matt-FFFFFF
+/policy/                                   @matt-FFFFFF
+/tools/                                    @matt-FFFFFF
+
+# The pinned toolchain. Named rather than left to the catch-all: changing the
+# Terraform version here changes what applies to production DNS.
+/mise.toml                                 @matt-FFFFFF
+
+# Critical: the zone itself, everything that answers at the apex, and the files
+# that decide who may approve anything.
+/zones/*/zone.yaml                         @matt-FFFFFF
+/zones/*/apex/                             @matt-FFFFFF
+/.github/                                  @matt-FFFFFF
+
+# Validation records, and the life cycle of a service.
+/zones/*/validations/                      @matt-FFFFFF
+/zones/*/services/*/service.yaml           @matt-FFFFFF
+
+# Team self-service. Add a line when a service is created; remove it when the
+# service is removed or delegated away.
+#
+# Note what this produces. Creating a service needs a critical approver for this
+# one line and a service approver for service.yaml, because the file that grants
+# merge rights is itself owned by the critical approvers. Changing or removing a
+# service that already exists needs only a service approver. That is a
+# consequence of the structure and not an extra rule: you cannot hand out merge
+# rights without editing the file that hands out merge rights.
+#
+# If the service approvers alone should be able to create a service, delete
+# these lines and enforce service.yaml's `owner` with a required status check
+# instead, trading GitHub's review logic for CI.
+/zones/*/services/home/records.yaml        @matt-FFFFFF

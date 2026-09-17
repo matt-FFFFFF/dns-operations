@@ -1,0 +1,18 @@
+# Microsoft 365 autodiscover.
+#
+# Outlook clients look up autodiscover.<domain> to find their server. This name
+# answers directly below the apex, so it is not a service subdomain and it is
+# not a verification record.
+#
+# Read this against apex/icloud-mail.yaml before you change either: the apex MX
+# records point at iCloud, so mail for @matt-ffffff.com is not delivered to
+# Microsoft 365. The Microsoft mailboxes sit under email.matt-ffffff.com, which
+# is delegated away in services/email/service.yaml. If nothing uses a
+# @matt-ffffff.com address with Outlook, this record has no reader and the file
+# can be deleted.
+
+records:
+  - name: autodiscover
+    type: CNAME
+    values: ["autodiscover.outlook.com"]
+    proxied: false

@@ -1,0 +1,18 @@
+name: toolchain
+description: Install the tools this repository is built on, at the versions mise.toml pins.
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      with:
+        cache: true
+
+    # The terraform wrapper the hashicorp action installs rewrites stdout;
+    # mise installs the real binary, so `tee` into a plan artifact and the
+    # -detailed-exitcode the drift job reads both behave.
+    - shell: bash
+      run: |
+        terraform version
+        opa version | head -2
+        uv --version

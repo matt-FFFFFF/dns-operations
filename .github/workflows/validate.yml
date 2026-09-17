@@ -1,0 +1,240 @@
+# Everything that must pass before a change to DNS can merge.
+#
+# CODEOWNERS decides who may approve. This decides what may be approved. Neither
+# is any use without branch protection: see docs/branch-protection.md, and note
+# that the required check is `gate`, not any of the per-zone plan jobs.
+
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Plans are read-only, so cancelling a superseded one costs nothing.
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: ./.github/actions/toolchain
+
+      # Parses the tree, evaluates the policy, runs the policy's own tests and
+      # the validator's fixture tests, and confirms that the two implementations
+      # of the layout -- Terraform's and dnsctl's -- still produce the same
+      # records.
+      - run: make check
+
+      # `make lint` checks offline that every action is pinned to a commit.
+      # This checks, with the API, that the version comment beside each SHA
+      # names the version that SHA actually is -- which a comment written by
+      # hand, or by somebody moving a tag, does not have to.
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pinact run --check --verify-comment
+
+  # Which zones this change can move. Everything downstream fans out over the
+  # answer, so a failure here must be a failure, never an empty list.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      zones: ${{ steps.zones.outputs.zones }}
+      any: ${{ steps.zones.outputs.any }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # changed-zones.sh diffs against the merge base, which a shallow
+          # clone does not have.
+          fetch-depth: 0
+
+      - id: zones
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./tools/changed-zones.sh --base "$BASE"
+
+  plan:
+    needs: [check, discover]
+    # A plan needs credentials, so it cannot run on a pull request from a fork.
+    # Without this the job would report a green tick for a check it never made.
+    if: >-
+      needs.discover.outputs.any == 'true' &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    environment: plan
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        zone: ${{ fromJSON(needs.discover.outputs.zones) }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+      ZONE: ${{ matrix.zone }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/tf-init
+        with:
+          zone: ${{ matrix.zone }}
+
+      - run: |
+          terraform -chdir=terraform plan -input=false -no-color \
+            -var "zone=$ZONE" | tee plan.txt
+
+      # What Cloudflare holds that this repository does not. Terraform never
+      # reports these: it does not delete what it was never told about, so a
+      # record added by hand in the dashboard is invisible to a plan.
+      - name: Unmanaged records
+        continue-on-error: true
+        run: ./tools/dnsctl.py drift --zone "$ZONE" | tee drift.txt
+
+      # always(), so a zone whose plan failed still puts its output on the
+      # pull request. if-no-files-found: ignore, because a failure early
+      # enough -- a missing credential, a backend that would not initialise --
+      # leaves no files at all.
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: plan-${{ matrix.zone }}
+          path: |
+            plan.txt
+            drift.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # One comment for the whole run, updated in place, rather than one per zone
+  # per push.
+  comment:
+    needs: [discover, plan]
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      needs.discover.outputs.any == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    # Two runs can otherwise race between finding the sticky comment and
+    # editing it, and leave two.
+    concurrency:
+      group: pr-comment-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      # Not fatal: when every leg failed before writing anything there is
+      # nothing to download, and the comment should still say so.
+      - continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: plan-*
+          path: plans
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: '<!-- dns-plan -->'
+          PLAN_RESULT: ${{ needs.plan.result }}
+          ZONES: ${{ needs.discover.outputs.zones }}
+        run: |
+          {
+            echo "$MARKER"
+            echo "### Terraform plan -- $PLAN_RESULT"
+            echo
+            echo "Zones in scope: \`$ZONES\`"
+            found=0
+            for dir in plans/plan-*; do
+              [ -d "$dir" ] || continue
+              found=1
+              zone=${dir#plans/plan-}
+              echo
+              echo "#### \`$zone\`"
+              echo
+              echo '```terraform'
+              tail -c 50000 "$dir/plan.txt" 2>/dev/null || echo '(no plan output)'
+              echo '```'
+              echo
+              echo '<details><summary>Records in Cloudflare that this repository does not manage</summary>'
+              echo
+              echo '```'
+              tail -c 8000 "$dir/drift.txt" 2>/dev/null || echo '(drift check did not run)'
+              echo '```'
+              echo '</details>'
+            done
+            if [ "$found" = 0 ]; then
+              echo
+              echo 'No plan output was produced. The jobs failed before writing any:'
+              echo 'check the run for the reason.'
+            fi
+          } > comment.md
+
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1)
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md >/dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR/comments" -F body=@comment.md >/dev/null
+          fi
+
+  # The required status check. Matrix job names carry the zone, so they change
+  # with every zone added and cannot be named in branch protection; this one
+  # has a fixed name.
+  #
+  # `if: always()` keeps it from being skipped, which matters because branch
+  # protection counts a skipped required check as satisfied. For the same
+  # reason the pass/fail decision is made inside the step: a false condition on
+  # the job itself would skip it, not fail it.
+  gate:
+    needs: [discover, check, plan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          DISCOVER: ${{ needs.discover.result }}
+          CHECK: ${{ needs.check.result }}
+          PLAN: ${{ needs.plan.result }}
+          ANY: ${{ needs.discover.outputs.any }}
+          SAME_REPO: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          [ "$DISCOVER" = success ] || { echo "::error::discover: $DISCOVER"; exit 1; }
+          [ "$CHECK" = success ]    || { echo "::error::check: $CHECK"; exit 1; }
+
+          # For a matrix job this is the aggregate, so one failed zone fails here.
+          # Written as `if`, not `[ ... ] && exit 0`: under `bash -e` a && list
+          # whose test is false is itself a failing command, and would fail the
+          # gate for the one result that should pass it.
+          if [ "$PLAN" = success ]; then
+            exit 0
+          fi
+
+          # Skipped is only acceptable for a reason discover can account for.
+          # Otherwise it is indistinguishable from discover having died before
+          # it wrote its outputs.
+          if [ "$PLAN" = skipped ]; then
+            if [ "$ANY" != true ]; then
+              echo "no zone changed; nothing to plan"
+              exit 0
+            fi
+            if [ "$SAME_REPO" != true ]; then
+              echo "::warning::pull request from a fork: no credentials, so no plan was made"
+              exit 0
+            fi
+          fi
+
+          echo "::error::plan: $PLAN"
+          exit 1

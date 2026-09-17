@@ -1,0 +1,146 @@
+# Nightly: does the world still match the repository?
+#
+# Three things this catches that a pull request cannot. A record added or edited
+# in the Cloudflare dashboard, which Terraform will not report because it does
+# not delete what it was never told about. A record this repository *does* own
+# edited underneath it, which only a plan against real state will show. And a
+# change to the delegation or to the DNSSEC state, which happens at the
+# registrar, outside Cloudflare and outside this repository entirely.
+#
+# Runs over every zone, not only the ones that changed: drift is by definition
+# something no commit caused.
+
+name: drift
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      zones: ${{ steps.zones.outputs.zones }}
+      any: ${{ steps.zones.outputs.any }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - id: zones
+        run: ./tools/changed-zones.sh --all
+
+  drift:
+    needs: discover
+    if: needs.discover.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    environment: plan
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        zone: ${{ fromJSON(needs.discover.outputs.zones) }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+      ZONE: ${{ matrix.zone }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/tf-init
+        with:
+          zone: ${{ matrix.zone }}
+
+      - id: verify
+        continue-on-error: true
+        run: ./tools/dnsctl.py verify --zone "$ZONE" | tee verify.txt
+
+      - id: unmanaged
+        continue-on-error: true
+        # --strict so a difference is a failure rather than a note.
+        run: ./tools/dnsctl.py drift --strict --zone "$ZONE" | tee drift.txt
+
+      # -detailed-exitcode: 0 no changes, 2 changes, 1 error. The three cannot
+      # be told apart from a step outcome, so the code is captured directly.
+      - id: tfplan
+        run: |
+          set +e
+          terraform -chdir=terraform plan -input=false -no-color -detailed-exitcode \
+            -var "zone=$ZONE" > tfplan.txt 2>&1
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          tail -c 20000 tfplan.txt
+          if [ "$code" = 1 ]; then
+            echo "::error::terraform plan failed for $ZONE"
+          fi
+
+      - name: Raise, update or clear the issue for this zone
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY: ${{ steps.verify.outcome }}
+          UNMANAGED: ${{ steps.unmanaged.outcome }}
+          TFPLAN: ${{ steps.tfplan.outputs.code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="DNS drift: $ZONE"
+
+          # One issue per zone, found by title, updated in place. Opening a new
+          # issue each night turns a week of known drift into seven issues.
+          gh label create dns-drift --color B60205 \
+            --description "The live zone and this repository disagree" 2>/dev/null || true
+          number=$(gh issue list --state open --label dns-drift --json number,title \
+                     --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+
+          clean=true
+          [ "$VERIFY" = success ]    || clean=false
+          [ "$UNMANAGED" = success ] || clean=false
+          [ "$TFPLAN" = 0 ]          || clean=false
+
+          if [ "$clean" = true ]; then
+            echo "$ZONE: repository and live zone agree"
+            if [ -n "$number" ]; then
+              gh issue close "$number" \
+                --comment "Clear as of $(date -u +%F): the live zone matches this repository again. $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          {
+            echo "The nightly check found a difference between this repository and \`$ZONE\`."
+            echo
+            echo "| check | result |"
+            echo "| --- | --- |"
+            echo "| delegation and DNSSEC (\`dnsctl verify\`) | $VERIFY |"
+            echo "| records Cloudflare holds that this repo does not (\`dnsctl drift\`) | $UNMANAGED |"
+            echo "| records this repo owns, changed underneath it (\`terraform plan\`) | $([ "$TFPLAN" = 0 ] && echo success || echo failure) |"
+            echo
+            echo '```'
+            cat verify.txt drift.txt 2>/dev/null
+            echo '```'
+            echo
+            echo '<details><summary>terraform plan</summary>'
+            echo
+            echo '```terraform'
+            tail -c 30000 tfplan.txt 2>/dev/null
+            echo '```'
+            echo '</details>'
+            echo
+            echo "Last seen: $RUN_URL"
+          } > body.md
+
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file body.md
+            echo "updated issue #$number"
+          else
+            gh issue create --title "$title" --body-file body.md --label dns-drift
+          fi
+          exit 1

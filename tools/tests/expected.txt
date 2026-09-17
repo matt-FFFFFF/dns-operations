@@ -1,0 +1,20 @@
+ERROR  tools/tests/zones/clash.example/apex/website.yaml, tools/tests/zones/clash.example/validations/acme.yaml: www.clash.example has a CNAME and also TXT -- a CNAME is exclusive at its name
+ERROR  tools/tests/zones/delegation.example/services/email/records.yaml: mx.email.delegation.example A sits at or below the email.delegation.example delegation, so it is never answered from this zone -- it belongs in the delegated zone
+ERROR  tools/tests/zones/delegation.example/services/email/records.yaml: this namespace is delegated externally, so nothing here is ever answered from this zone -- delegate the namespace or hold it here, not both
+ERROR  tools/tests/zones/delegation.example/services/email/service.yaml: an external delegation must set expires -- a subdomain takeover is a delegation that outlived the service it pointed at
+ERROR  tools/tests/zones/delegation.example/validations/microsoft.yaml: TXT 'email' sits inside the 'email' service namespace, and that team will not see this change -- ask them to add it to their records.yaml
+ERROR  tools/tests/zones/delegation.example/validations/microsoft.yaml: email.delegation.example TXT sits at or below the email.delegation.example delegation, so it is never answered from this zone -- it belongs in the delegated zone
+ERROR  tools/tests/zones/names.example/services/search/records.yaml: records[0]: name 'a.b' must be a single label -- a dot nests a namespace that nothing in this repository owns
+ERROR  tools/tests/zones/names.example/services/search/records.yaml: records[1]: MX is not permitted here -- a team's own records are A, AAAA, CNAME, TXT, and delegation is declared in service.yaml
+ERROR  tools/tests/zones/names.example/services/search/records.yaml: records[2]: HTTPS is not permitted here -- a team's own records are A, AAAA, CNAME, TXT, and delegation is declared in service.yaml
+ERROR  tools/tests/zones/names.example/services/search/records.yaml: records[4]: ttl 300 conflicts with proxied: true -- Cloudflare serves a proxied record and controls its TTL, so leave ttl out
+ERROR  tools/tests/zones/names.example/services/search/records.yaml: unknown key 'proxy' in records[3] -- allowed: comment, name, priority, proxied, ttl, type, values
+ERROR  tools/tests/zones/nested.example/services/docs.search: a service directory is one label -- 'docs.search' nests a namespace inside another one, and the path alone cannot prevent that
+ERROR  tools/tests/zones/validation.example/validations/hubspot.yaml: a CNAME at the apex replaces the website, whatever the vendor's instructions say -- a TXT record at @ is the correct way to prove a domain
+ERROR  tools/tests/zones/validation.example/validations/hubspot.yaml: cname 'docs.search' must be a single label -- a dotted name lands inside a service namespace, and a CNAME is exclusive at its name, so it would not clash with that team's records, it would invalidate them
+ERROR  tools/tests/zones/validation.example/validations/hubspot.yaml: expires is required -- a record nobody can explain is a record nobody will ever dare to delete
+ERROR  tools/tests/zones/validation.example/validations/hubspot.yaml: purpose is required -- a record nobody can explain is a record nobody will ever dare to delete
+ERROR  tools/tests/zones/validation.example/validations/slack.yaml: line 6, column 3: duplicate key '_slack' -- the second one would silently replace the first
+
+17 error(s), 1 warning(s)
+warn   tools/tests/zones/names.example/services/search/service.yaml: the search.names.example allocation expired on 2020-01-01 -- confirm it is still wanted or remove it

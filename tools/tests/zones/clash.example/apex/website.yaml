@@ -1,0 +1,4 @@
+records:
+  - name: www
+    type: CNAME
+    values: ["example.pages.dev"]

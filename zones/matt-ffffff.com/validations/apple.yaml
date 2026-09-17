@@ -1,0 +1,15 @@
+# One file for each vendor. To stop proving this domain to Apple, delete the
+# file: `git rm zones/matt-ffffff.com/validations/apple.yaml`. Nobody has to
+# read the history of the repository to find out what this record was for.
+
+vendor: apple
+requested_by: matt
+purpose: >-
+  Proves ownership of matt-ffffff.com to Apple for the iCloud+ Custom Email
+  Domain that serves mail for the domain. Deleting it un-verifies the domain
+  and mail stops. The records that carry that mail are in
+  apex/icloud-mail.yaml.
+expires: 2027-09-17
+
+txt:
+  "@": ["apple-domain=o2rSMey13yFlucwo"]

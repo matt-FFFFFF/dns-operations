@@ -1,0 +1,91 @@
+# Applies what is on main, one zone at a time.
+#
+# The `production` environment is the place to put the approval this repository
+# cannot express any other way. CODEOWNERS is OR logic -- one approver out of
+# the group merges the change -- so if a change to the apex needs two people, or
+# needs somebody who does not have write access to the repository, require
+# reviewers on the environment instead.
+#
+# There is deliberately no `paths:` filter on the trigger. Two places deciding
+# which changes matter is one too many, and the filter is the one that fails
+# silently: a change to policy/ or tools/ would never start the workflow at all,
+# so the shared-path fan-out in changed-zones.sh would never get the chance to
+# run. That script is the single answer to the question.
+
+name: apply
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The same gate as the pull request. A change can reach main by a route that
+  # skipped it -- an administrator override, a direct push, a merge queue that
+  # batched two changes that are fine apart and wrong together.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/toolchain
+      - run: make check
+
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      zones: ${{ steps.zones.outputs.zones }}
+      any: ${{ steps.zones.outputs.any }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      # On workflow_dispatch there is no `before`, so changed-zones.sh falls
+      # back to every zone -- which is what a manual apply should do.
+      - id: zones
+        env:
+          BASE: ${{ github.event.before }}
+        run: ./tools/changed-zones.sh --base "$BASE"
+
+  apply:
+    needs: [check, discover]
+    if: needs.discover.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        zone: ${{ fromJSON(needs.discover.outputs.zones) }}
+    # One apply at a time per zone, and never cancel one halfway through: a
+    # cancelled apply leaves Cloudflare holding a state nothing in this
+    # repository describes. Shared, as a plain string, with reconcile.yml.
+    concurrency:
+      group: dns-${{ matrix.zone }}
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+      ZONE: ${{ matrix.zone }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/tf-init
+        with:
+          zone: ${{ matrix.zone }}
+
+      - run: terraform -chdir=terraform apply -input=false -auto-approve -var "zone=$ZONE"
+
+      # Did the change do what it said? Answered by the public DNS, not by
+      # Terraform's own state.
+      - name: Confirm the delegation and DNSSEC state
+        run: ./tools/dnsctl.py verify --zone "$ZONE"

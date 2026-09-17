@@ -1,0 +1,23 @@
+# One place that pins the tools, for a laptop and for CI alike. `mise install`
+# locally; .github/actions/toolchain runs the same file in Actions, so the
+# version that works here is the version that runs there.
+#
+# Pinned rather than "latest" on purpose: `make check` compares two
+# implementations of the layout and a golden file of the validator's findings,
+# both of which a tool upgrade can move. Upgrading is a commit, reviewed like
+# any other.
+
+[tools]
+terraform = "1.16.0"
+
+# `make check` needs one of opa or conftest.
+opa = "1.20.2"
+
+# dnsctl runs under uv, which fetches PyYAML itself.
+uv = "0.12.8"
+
+# `make lint`. actionlint reads the workflows and shells out to shellcheck for
+# the `run:` blocks; pinact checks every action is pinned to a commit.
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+pinact = "5.0.0"

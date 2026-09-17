@@ -1,0 +1,142 @@
+# Push the repository's intent back over whatever changed in Cloudflare.
+#
+# What this fixes: a record this repository owns that was edited in the
+# dashboard. Terraform holds state for those, so an apply puts them back.
+#
+# What it does not fix: records Cloudflare holds that this repository never
+# declared. Terraform has no state for them and cannot remove them. They are
+# reported in the job summary and left exactly where they are -- deleting a
+# record nobody wrote down is not something a workflow should decide to do.
+
+name: reconcile
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: 'A zone directory under zones/, or "all"'
+        type: string
+        default: all
+        required: true
+      mode:
+        description: 'plan shows what would change; apply makes it so'
+        type: choice
+        options: [plan, apply]
+        default: plan
+        required: true
+      reason:
+        description: 'Why this is being run -- goes in the job summary'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # `zone` is free text validated against the tree rather than a `choice`, so
+  # the list cannot rot every time a zone is added. A name that does not exist
+  # fails here rather than quietly resolving to an empty set.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      zones: ${{ steps.zones.outputs.zones }}
+      any: ${{ steps.zones.outputs.any }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - id: zones
+        env:
+          ZONE: ${{ inputs.zone }}
+        run: ./tools/changed-zones.sh --zone "$ZONE"
+
+  reconcile:
+    needs: discover
+    if: needs.discover.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    # A dry run should not consume an approval; a write must. Safe as an
+    # expression here only because this workflow has no trigger other than
+    # workflow_dispatch -- the `inputs` context does not exist on the others.
+    environment: ${{ inputs.mode == 'apply' && 'production' || 'plan' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        zone: ${{ fromJSON(needs.discover.outputs.zones) }}
+    # The same string as apply.yml, so a reconciliation and a merge can never
+    # write the same zone at once. Concurrency groups are matched as plain
+    # text; a drifted name would defeat the interlock with no error.
+    concurrency:
+      group: dns-${{ matrix.zone }}
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.ARM_SUBSCRIPTION_ID }}
+      ZONE: ${{ matrix.zone }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/tf-init
+        with:
+          zone: ${{ matrix.zone }}
+
+      - name: Record why
+        env:
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          {
+            echo "## \`$ZONE\` -- $MODE"
+            echo
+            echo "Run by @$ACTOR."
+            echo
+            echo "> $REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore the records this repository owns
+        run: |
+          if [ "$MODE" = apply ]; then
+            terraform -chdir=terraform apply -input=false -auto-approve -no-color \
+              -var "zone=$ZONE" | tee tf.txt
+          else
+            terraform -chdir=terraform plan -input=false -no-color \
+              -var "zone=$ZONE" | tee tf.txt
+          fi
+          {
+            echo
+            echo "<details><summary>terraform $MODE</summary>"
+            echo
+            echo '```terraform'
+            tail -c 30000 tf.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Reported, never removed. Terraform holds no state for these, so an
+      # apply neither restores nor deletes them; they survive this workflow and
+      # that is the intended behaviour.
+      - name: What this could not reconcile
+        if: always()
+        run: |
+          ./tools/dnsctl.py drift --zone "$ZONE" > unmanaged.txt 2>&1 || true
+          {
+            echo
+            echo "### Records in Cloudflare that this repository does not manage"
+            echo
+            echo 'Left untouched. Terraform has no state for them, so it can neither'
+            echo 'restore nor remove them. Adopt them into the tree, or delete them by'
+            echo 'hand in Cloudflare.'
+            echo
+            echo '```'
+            tail -c 8000 unmanaged.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Confirm the delegation and DNSSEC state
+        if: ${{ inputs.mode == 'apply' }}
+        run: ./tools/dnsctl.py verify --zone "$ZONE"

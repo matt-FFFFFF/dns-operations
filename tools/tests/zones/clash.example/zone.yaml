@@ -1,0 +1,7 @@
+zone: clash.example
+zone_id: null
+dnssec: unsigned
+nameservers: [ns1.example.net, ns2.example.net]
+ttl:
+  default: 300
+  validation: 3600

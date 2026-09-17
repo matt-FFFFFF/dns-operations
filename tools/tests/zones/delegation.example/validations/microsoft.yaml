@@ -1,0 +1,5 @@
+vendor: microsoft
+purpose: "Verification that was left in the parent zone after email/ was delegated away"
+expires: 2027-01-01
+txt:
+  email: ["ms-domain-verification=deadbeef"]

@@ -1,0 +1,36 @@
+# iCloud+ Custom Email Domain: everything that stops working the day the mail
+# platform is cancelled.
+#
+# One file, because these records are one decision. The MX records without the
+# SPF record bounce mail; the DKIM selector without the MX records signs
+# nothing. A migration that misses one file misses one of these.
+#
+# The TXT record that proves ownership of the domain to Apple is not here. A
+# verification record belongs in validations/apple.yaml, where it has a stated
+# purpose and an expiry date.
+
+records:
+  - name: "@"
+    type: MX
+    priority: 10
+    values:
+      - mx01.mail.icloud.com
+      - mx02.mail.icloud.com
+
+  - name: "@"
+    type: TXT
+    values: ["v=spf1 include:icloud.com ~all"]
+
+  # DKIM. Apple publishes the key in a zone it controls and asks for a CNAME,
+  # so the key can be rotated without a change here.
+  - name: sig1._domainkey
+    type: CNAME
+    values: ["sig1.dkim.matt-ffffff.com.at.icloudmailadmin.com"]
+    proxied: false
+
+  # Reports go to Cloudflare's DMARC Management. The mailbox in `rua` is issued
+  # per zone; it is not a secret, but it is also not reusable elsewhere.
+  - name: _dmarc
+    type: TXT
+    values:
+      - "v=DMARC1; p=quarantine; sp=quarantine; rua=mailto:1174ef33290a481faf1bb5d5e4fae0e8@dmarc-reports.cloudflare.net"

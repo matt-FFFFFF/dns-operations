@@ -1,0 +1,32 @@
+# email.matt-ffffff.com
+#
+# Delegated to Azure DNS, which holds the Microsoft 365 mail records for this
+# namespace. Delegation is a property of the service, not a record, so it is
+# declared here and Terraform derives the NS records from it.
+#
+# There is deliberately no records.yaml in this directory, and policy rejects
+# one. Below a delegation, resolvers follow the NS records and never read
+# anything else this zone publishes at the same name, so a records.yaml here
+# would be YAML that looks live and answers nothing.
+#
+# There is a real example of that failure in the live zone today. Cloudflare
+# still holds a TXT record at email.matt-ffffff.com carrying
+# ms-domain-verification=11d05763-...; the Azure zone publishes the same record
+# plus an SPF record that Cloudflare's copy does not have. The answer the world
+# gets comes from Azure. The Cloudflare copy is already stale and nothing would
+# have told anyone. This repository does not manage it; `make drift` reports it
+# so it can be deleted at source.
+
+owner: "@matt-FFFFFF"
+
+delegation:
+  type: external
+  nameservers:
+    - ns1-03.azure-dns.com
+    - ns2-03.azure-dns.net
+    - ns3-03.azure-dns.org
+    - ns4-03.azure-dns.info
+  # Mandatory. A delegation that outlives the service it points at is how a
+  # subdomain takeover starts, so every delegation gets a date at which someone
+  # has to say it is still wanted.
+  expires: 2027-09-17

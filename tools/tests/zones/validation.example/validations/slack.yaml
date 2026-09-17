@@ -1,0 +1,6 @@
+vendor: slack
+purpose: "Two records, one key"
+expires: 2027-01-01
+txt:
+  _slack: ["first"]
+  _slack: ["second"]

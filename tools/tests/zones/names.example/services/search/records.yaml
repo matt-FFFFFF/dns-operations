@@ -1,0 +1,20 @@
+records:
+  - name: a.b
+    type: CNAME
+    values: ["x.pages.dev"]
+  - name: "@"
+    type: MX
+    priority: 10
+    values: ["mx.example.net"]
+  - name: www
+    type: HTTPS
+    values: ["1 . alpn=h2"]
+  - name: api
+    type: CNAME
+    values: ["api.pages.dev"]
+    proxy: true
+  - name: cdn
+    type: A
+    values: ["192.0.2.1"]
+    proxied: true
+    ttl: 300

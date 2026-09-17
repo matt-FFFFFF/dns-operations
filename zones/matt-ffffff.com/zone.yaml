@@ -1,0 +1,42 @@
+# Zone settings. Critical approvers own this file.
+#
+# Nothing here creates a record. This file describes the zone itself: where it
+# lives, how it is signed, who answers for it, and the TTL a record gets when
+# it does not ask for one.
+
+zone: matt-ffffff.com
+
+# Cloudflare zone id. Leave it null to look the zone up by name when Terraform
+# runs; the API token then also needs Zone:Read on the account. Set the id once
+# you have it: a literal id removes a lookup and removes a failure mode.
+zone_id: null
+
+# Cloudflare account that holds the zone. Only used to disambiguate the lookup
+# above when the token can see more than one account. Leave null otherwise --
+# this repository is public, and an account id is an identifier worth not
+# publishing for a lookup that works without it.
+account_id: null
+
+# DNSSEC state of the zone as it is today: signed or unsigned.
+#
+# Terraform does not change this. `make verify` asks the public DNS whether the
+# registrar publishes a DS record and fails if the answer disagrees with this
+# field. Changing the field does not sign the zone; it only changes what CI
+# believes, so change it after the zone changes, never before.
+dnssec: unsigned
+
+# The nameservers the registrar must delegate to. Cloudflare assigns these and
+# Terraform does not manage them. `make verify` checks the live delegation
+# against this list, so a silent nameserver change has somewhere to be caught.
+nameservers:
+  - cora.ns.cloudflare.com
+  - pete.ns.cloudflare.com
+
+ttl:
+  # The TTL for any record that does not set `ttl:` itself.
+  # 1 means Cloudflare "Auto", which serves 300 seconds.
+  default: 1
+
+  # Validation files hold a map of names, not a list of records, so they have
+  # nowhere to put a per-record TTL. They take this value instead.
+  validation: 1

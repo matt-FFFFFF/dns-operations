@@ -1,0 +1,5 @@
+vendor: acme
+purpose: "A TXT record at a name that already has a CNAME"
+expires: 2027-01-01
+txt:
+  www: ["token"]

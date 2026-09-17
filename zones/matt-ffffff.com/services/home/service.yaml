@@ -1,0 +1,11 @@
+# home.matt-ffffff.com
+#
+# The namespace is the directory name. No field here declares it, so it cannot
+# be wrong and the owning team cannot widen it.
+#
+# Service approvers own this file. The owning team owns records.yaml next to it
+# and merges changes there without asking anyone.
+
+owner: "@matt-FFFFFF"
+expires: 2027-09-17
+delegation: null

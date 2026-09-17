@@ -1,0 +1,11 @@
+# Records inside home.matt-ffffff.com. The owning team merges changes here.
+#
+# Names are relative to the namespace and there is no fully qualified form, so
+# a record written here cannot land outside it. "@" is home.matt-ffffff.com.
+
+records:
+  # Home Assistant Cloud (Nabu Casa) remote access.
+  - name: "@"
+    type: CNAME
+    values: ["5deoge71zazv0j2it4plnuyzatlbxufp.ui.nabu.casa"]
+    proxied: true
