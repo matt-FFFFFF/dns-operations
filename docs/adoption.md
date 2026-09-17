@@ -27,12 +27,22 @@ addresses it by a random id. Pair them up:
     export CLOUDFLARE_API_TOKEN=...          # Zone:DNS:Read is enough here
     ./tools/dnsctl.py import-blocks --out terraform/imports.tf
 
-**This step is not optional and the file is not in the repository.**
-`terraform/imports.tf` is a list of Cloudflare record ids, so `.gitignore`
-excludes it: this repository is public and those ids have no business in it.
-Without the file the first apply *creates* every record rather than adopting
-it, against a zone that already holds them. Regenerate it here, every time,
-for every zone being adopted.
+**This step is not optional.** `terraform/imports.tf` is a list of Cloudflare
+record ids, so `.gitignore` excludes it by default: this repository is public
+and those ids have no reason to live in it permanently. Without the file the
+first apply *creates* every record rather than adopting it, against a zone that
+already holds them -- which for a zone carrying MX and SPF records means
+duplicate mail configuration, not a failed run.
+
+The apply runs in CI, which does not have the file. So for the one commit that
+adopts a zone, force it past the ignore rule:
+
+    git add -f terraform/imports.tf
+
+Merge, let the apply run, confirm it imported, then `git rm` it. `.gitignore`
+needs no editing either way, because it only governs untracked files.
+Committing it puts those ids in public history permanently -- deleting the file
+later does not remove them -- so do it once, deliberately.
 
 Anything the repository describes but Cloudflare does not hold is reported on
 stderr: those will be created rather than adopted, which is usually a sign of a
