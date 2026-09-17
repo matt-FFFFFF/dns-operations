@@ -18,3 +18,5 @@ records:
     type: CNAME
     values: ["matt-ffffff.com"]
     proxied: false
+
+# temporary: proving gate blocks a merge
