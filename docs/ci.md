@@ -95,48 +95,84 @@ Removing a zone is manual and deliberate:
 
 ### Azure, for the state
 
-One storage account, one container, one blob per zone. The identity
-authenticates with Entra rather than a storage account key, so it needs
-data-plane RBAC, which account-key auth never did.
+One storage account, one container, one blob per zone, and **two user-assigned
+managed identities** -- one per environment, so the identity that may only read
+a plan is not the identity that may write DNS.
+
+Shared-key access is switched off on the account, so Entra is the only way in
+and every identity needs data-plane RBAC. Control-plane Owner does not grant it:
+that is the step people miss.
 
 ```bash
-REPO=<owner>/dns-operations
-ACCOUNT=<storage-account-name>      # globally unique, 3-24 lowercase chars
-RG=rg-tfstate
+REPO=matt-FFFFFF/dns-operations
+RG=rg-dns-operations
+ACCOUNT=<globally unique, 3-24 lowercase chars>
+LOC=uksouth
 
-az group create --name "$RG" --location uksouth
-az storage account create --name "$ACCOUNT" --resource-group "$RG" \
-  --location uksouth --sku Standard_LRS --kind StorageV2 \
-  --min-tls-version TLS1_2 --allow-blob-public-access false
-az storage container create --name dns-operations \
-  --account-name "$ACCOUNT" --auth-mode login
+az provider register --namespace Microsoft.Storage --wait   # "SubscriptionNotFound" if you skip this
 
-# An identity for GitHub to assume.
-az ad app create --display-name dns-operations
-APP_ID=$(az ad app list --display-name dns-operations --query '[0].appId' -o tsv)
-az ad sp create --id "$APP_ID"
+az group create --name "$RG" --location "$LOC"
+az storage account create --name "$ACCOUNT" --resource-group "$RG" --location "$LOC" \
+  --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
+  --allow-blob-public-access false --allow-shared-key-access false --https-only true
 
-# Storage Blob Data Contributor on the container, not the subscription.
-SCOPE=$(az storage account show --name "$ACCOUNT" --resource-group "$RG" --query id -o tsv)
-az role assignment create --assignee "$APP_ID" \
-  --role "Storage Blob Data Contributor" \
-  --scope "$SCOPE/blobServices/default/containers/dns-operations"
+# container-rm, not `az storage container create`: the latter is a data-plane
+# call, and with shared keys off you have no data-plane rights until the role
+# assignment below exists. Chicken, egg.
+az storage container-rm create --storage-account "$ACCOUNT" -g "$RG" --name dns-operations
+
+az identity create --name id-dns-operations-plan  --resource-group "$RG" --location "$LOC"
+az identity create --name id-dns-operations-apply --resource-group "$RG" --location "$LOC"
 ```
 
-**Two** federated credentials, not one. The OIDC subject carries the environment
-name, so a single credential authenticates half the pipeline and leaves the
-other half failing with an opaque token-exchange error:
+Data-plane roles, scoped to the container rather than the account or the
+subscription:
 
 ```bash
-for env in plan production; do
-  az ad app federated-credential create --id "$APP_ID" --parameters "{
-    \"name\": \"github-$env\",
-    \"issuer\": \"https://token.actions.githubusercontent.com\",
-    \"subject\": \"repo:$REPO:environment:$env\",
-    \"audiences\": [\"api://AzureADTokenExchange\"]
-  }"
+SCOPE=$(az storage account show -n "$ACCOUNT" -g "$RG" --query id -o tsv)/blobServices/default/containers/dns-operations
+
+for id in plan apply; do
+  az role assignment create \
+    --assignee-object-id "$(az identity show -n id-dns-operations-$id -g "$RG" --query principalId -o tsv)" \
+    --assignee-principal-type ServicePrincipal \
+    --role "Storage Blob Data Contributor" --scope "$SCOPE"
 done
 ```
+
+Both identities get **Contributor**, not Reader. `terraform plan` takes a blob
+lease to lock the state, which is a write; a read-only identity fails on the
+lock, not on the plan. A human who only needs to look gets
+`Storage Blob Data Reader` instead.
+
+**Two** federated credentials, one per identity, because the OIDC subject
+carries the environment name. A single credential authenticates half the
+pipeline and leaves the other half failing with an opaque token-exchange error.
+
+Repositories created after 15 July 2026 use GitHub's **immutable** subject
+format, which identifies the owner and repository by id as well as by name, so
+a rename cannot silently hand the credential to somebody else:
+
+```
+repo:<owner>@<owner_id>/<repo>@<repository_id>:environment:<environment>
+```
+
+```bash
+IDS=$(gh api "repos/$REPO" --jq '"\(.owner.login)@\(.owner.id)/\(.name)@\(.id)"')
+ISSUER=https://token.actions.githubusercontent.com
+AUD=api://AzureADTokenExchange
+
+az identity federated-credential create --name github-plan \
+  --identity-name id-dns-operations-plan -g "$RG" \
+  --issuer "$ISSUER" --subject "repo:${IDS}:environment:plan" --audiences "$AUD"
+
+az identity federated-credential create --name github-production \
+  --identity-name id-dns-operations-apply -g "$RG" \
+  --issuer "$ISSUER" --subject "repo:${IDS}:environment:production" --audiences "$AUD"
+```
+
+Note the asymmetry: the identity is called `apply`, the environment it
+federates to is called `production`. The environment name is what appears in
+the token, so that is what the subject must say.
 
 Then fill in `terraform/backend/azurerm.hcl` with `$RG` and `$ACCOUNT`.
 
@@ -162,8 +198,14 @@ JSON
 TENANT=$(az account show --query tenantId -o tsv)
 SUB=$(az account show --query id -o tsv)
 
+# Each environment gets its own identity's client id. This is the whole point
+# of two identities: the plan environment cannot assume the apply one.
+gh variable set ARM_CLIENT_ID --env plan --repo "$REPO" \
+  --body "$(az identity show -n id-dns-operations-plan -g "$RG" --query clientId -o tsv)"
+gh variable set ARM_CLIENT_ID --env production --repo "$REPO" \
+  --body "$(az identity show -n id-dns-operations-apply -g "$RG" --query clientId -o tsv)"
+
 for env in plan production; do
-  gh variable set ARM_CLIENT_ID       --env "$env" --repo "$REPO" --body "$APP_ID"
   gh variable set ARM_TENANT_ID       --env "$env" --repo "$REPO" --body "$TENANT"
   gh variable set ARM_SUBSCRIPTION_ID --env "$env" --repo "$REPO" --body "$SUB"
 done
@@ -184,7 +226,7 @@ removes every gate below.
 
 | gate | what it stops |
 | --- | --- |
-| `gate` as a required status check on `main` | a merge while `check`, `discover` or any zone's `plan` is failing |
+| `gate` as a required status check in the `main` ruleset | a merge while `check`, `discover` or any zone's `plan` is failing |
 | required reviewer on `production` | an apply running without a human saying yes |
 | deployment branch policy on `production` | an apply from any branch but `main` |
 
@@ -196,7 +238,10 @@ is one person here:
   approval would lock the only owner out of the repository. Turning both on is
   the first thing to do when a second person arrives, and it is what gives
   CODEOWNERS any force at all.
-- `enforce_admins: false`, so a wedged pipeline can still be fixed.
+- The ruleset has **no bypass actors**, so the required check applies to the
+  owner too. Under classic protection with `enforce_admins: false` it did not,
+  and a failing `gate` left a pull request mergeable. See
+  [branch-protection.md](branch-protection.md).
 
 Both environments hold the same token to begin with. Narrow the `plan` one to
 `Zone:Read` + `Zone:DNS:Read` when convenient — no workflow changes needed.
