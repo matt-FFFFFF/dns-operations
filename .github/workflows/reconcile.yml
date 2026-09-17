@@ -42,7 +42,7 @@ jobs:
       zones: ${{ steps.zones.outputs.zones }}
       any: ${{ steps.zones.outputs.any }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: zones
         env:
           ZONE: ${{ inputs.zone }}
@@ -79,7 +79,7 @@ jobs:
       ZONE: ${{ matrix.zone }}
       MODE: ${{ inputs.mode }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/toolchain
       - uses: ./.github/actions/tf-init
         with:
