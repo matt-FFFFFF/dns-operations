@@ -45,6 +45,28 @@ changed zones, or when the pull request came from a fork. Any other skip is
 treated as a failure, because it is indistinguishable from `discover` having
 died before writing its outputs.
 
+## An apply awaiting approval blocks every later apply for that zone
+
+`production` requires a reviewer, so an apply job sits in `waiting` until
+somebody approves it -- and while it waits it holds `dns-<zone>`. Every later
+apply for that zone queues behind it, showing:
+
+    This job is waiting on apply (<zone>) (apply #N) to complete before running
+
+naming what looks like itself. It is not: it is the earlier run, still at the
+approval gate, possibly from days ago.
+
+This is worth knowing because the natural reading is a workflow bug. Check for
+it with:
+
+```bash
+gh api "repos/OWNER/REPO/actions/runs?status=waiting" --jq '.workflow_runs[] | "\(.id) \(.name)"'
+```
+
+Then approve it or cancel it. Cancel is usually right: a run that has been
+waiting is planning an old commit, and approving it applies that old commit
+rather than the current one.
+
 ## A superseded apply shows as cancelled
 
 Each apply job takes `concurrency: dns-<zone>`, which `reconcile` shares, so one

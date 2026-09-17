@@ -6,10 +6,12 @@
 
 name: validate
 
+# Pull requests only. A push to main is already covered by apply.yml, which
+# runs the same `make check` and plans every changed zone before it applies
+# one -- running validate there too is the same work twice, and a second set
+# of jobs to read.
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -57,7 +59,7 @@ jobs:
 
       - id: zones
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: ./tools/changed-zones.sh --base "$BASE"
 
   plan:
@@ -66,8 +68,7 @@ jobs:
     # Without this the job would report a green tick for a check it never made.
     if: >-
       needs.discover.outputs.any == 'true' &&
-      (github.event_name == 'push' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: plan
     permissions:
@@ -122,7 +123,7 @@ jobs:
   comment:
     needs: [discover, plan]
     if: >-
-      always() && github.event_name == 'pull_request' &&
+      always() &&
       needs.discover.outputs.any == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -209,7 +210,7 @@ jobs:
           CHECK: ${{ needs.check.result }}
           PLAN: ${{ needs.plan.result }}
           ANY: ${{ needs.discover.outputs.any }}
-          SAME_REPO: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           [ "$DISCOVER" = success ] || { echo "::error::discover: $DISCOVER"; exit 1; }
           [ "$CHECK" = success ]    || { echo "::error::check: $CHECK"; exit 1; }
