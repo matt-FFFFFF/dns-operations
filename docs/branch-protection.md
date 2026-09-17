@@ -54,27 +54,48 @@ any zone added afterwards. See [ci.md](ci.md).
 
 ## What is actually set, today
 
-```bash
-gh api repos/matt-FFFFFF/dns-operations/branches/main/protection
-```
-
-- `gate` required, `strict: true` (a branch must be up to date with `main`)
-- pull request required, but **zero** approvals and **no** code-owner review
-- `enforce_admins: false`
-
-The last two are not the design. They are what a one-person repository can
-have: GitHub refuses to let anyone approve their own pull request, so requiring
-an approval would mean nothing could ever merge. Until there is a second person,
-`gate` is the control and CODEOWNERS is documentation.
-
-When a second person arrives, this is the change:
+`main` is protected by a **repository ruleset**, not by classic branch
+protection. One mechanism, so there is one place to look:
 
 ```bash
-gh api --method PATCH repos/matt-FFFFFF/dns-operations/branches/main/protection \
-  --input - <<'JSON'
-{"required_pull_request_reviews": {
-   "required_approving_review_count": 1,
-   "require_code_owner_reviews": true,
-   "dismiss_stale_reviews": true}}
-JSON
+gh api repos/matt-FFFFFF/dns-operations/rules/branches/main
 ```
+
+| rule | effect |
+| --- | --- |
+| `required_status_checks` -> `gate` | nothing merges while the pipeline disagrees, and `strict` means the branch must be up to date with `main` first |
+| `pull_request` | no direct pushes to `main`; squash or rebase only |
+| `required_linear_history` | no merge commits |
+| `non_fast_forward` | no force-pushing `main` |
+| `deletion` | `main` cannot be deleted |
+
+`bypass_actors` is empty. Nobody bypasses this, including the owner -- which is
+the point. With classic protection and `enforce_admins: false` the required
+check did not apply to the repository owner at all: a failing `gate` left the
+pull request `UNSTABLE` (mergeable, with a failing check) rather than
+`BLOCKED`. The gate existed and enforced nothing. Verified both ways against a
+live pull request before the ruleset replaced it.
+
+### Zero approvals, and what to change when there are two of you
+
+`required_approving_review_count` is **0** and `require_code_owner_review` is
+**false**. That is not the design; it is what a one-person repository can have,
+because GitHub refuses to let anyone approve their own pull request. Until there
+is a second person, `gate` is the control and CODEOWNERS is documentation.
+
+When a second person arrives, raise the count to 1 and turn on code-owner
+review in the same ruleset. That single change is what gives every line of
+`.github/CODEOWNERS` its force.
+
+### No bypass means no bypass
+
+There is no escape hatch, on purpose. If `gate` fails for a reason unrelated to
+the change -- a broken runner, an expired credential -- the fix is to make
+`gate` pass, not to route around it. The only lever is editing the ruleset
+itself, which is an auditable act rather than a quiet one.
+
+That cuts both ways, and it bit once already: while `ARM_*` was unset, `plan`
+could not run, so `gate` could not pass, so nothing could merge at all. The
+pipeline was behaving correctly and the repository was still stuck. If you hit
+that again, the answer is usually that CI is missing something it needs, not
+that the rule is wrong.

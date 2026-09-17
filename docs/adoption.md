@@ -27,12 +27,16 @@ addresses it by a random id. Pair them up:
     export CLOUDFLARE_API_TOKEN=...          # Zone:DNS:Read is enough here
     ./tools/dnsctl.py import-blocks --out terraform/imports.tf
 
-**This step is not optional and the file is not in the repository.**
-`terraform/imports.tf` is a list of Cloudflare record ids, so `.gitignore`
-excludes it: this repository is public and those ids have no business in it.
-Without the file the first apply *creates* every record rather than adopting
-it, against a zone that already holds them. Regenerate it here, every time,
-for every zone being adopted.
+**This step is not optional, and the file has to be committed.** The apply runs
+in CI, which has only what is in the repository. Without `terraform/imports.tf`
+the first apply *creates* the fifteen records it should be adopting, against a
+zone that already holds them -- for a zone carrying MX and SPF records that is
+duplicate mail configuration, not a failed run.
+
+So: commit it, merge, let the apply import, then `git rm` it. It is a list of
+Cloudflare record ids rather than anything secret -- none of them grant access
+without the API token -- but it is also dead weight the moment the import is
+done, and it goes stale silently if a record is ever recreated by hand.
 
 Anything the repository describes but Cloudflare does not hold is reported on
 stderr: those will be created rather than adopted, which is usually a sign of a
