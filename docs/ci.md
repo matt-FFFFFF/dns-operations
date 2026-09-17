@@ -56,16 +56,27 @@ apply for that zone queues behind it, showing:
 naming what looks like itself. It is not: it is the earlier run, still at the
 approval gate, possibly from days ago.
 
-This is worth knowing because the natural reading is a workflow bug. Check for
-it with:
+`discover` now clears this automatically, via `tools/supersede-waiting.sh`. It
+cancels an earlier waiting run -- which is planning an old commit anyway -- but
+only under two conditions, because the API cancels whole runs while the thing
+being blocked is a single job:
+
+- **Nothing in that run is `in_progress`.** A job that is executing may already
+  have written to Cloudflare.
+- **This run covers every zone that run is still waiting on.** Otherwise
+  cancelling would drop that zone's apply, and because `changed-zones.sh`
+  diffs against the previous commit it would never come back into scope: a
+  merged change would simply never reach DNS.
+
+When either check fails the earlier run is left alone and annotated, and you
+resolve it by hand:
 
 ```bash
 gh api "repos/OWNER/REPO/actions/runs?status=waiting" --jq '.workflow_runs[] | "\(.id) \(.name)"'
 ```
 
-Then approve it or cancel it. Cancel is usually right: a run that has been
-waiting is planning an old commit, and approving it applies that old commit
-rather than the current one.
+`cancel-in-progress: true` is not the answer to any of this: it cannot tell
+"waiting for approval, nothing written" from "halfway through writing records".
 
 ## A superseded apply shows as cancelled
 

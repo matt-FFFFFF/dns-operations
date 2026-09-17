@@ -14,6 +14,7 @@ make lint          # actionlint, shellcheck, pinact
 make test          # policy unit tests
 make test-fixtures # the validator's own tests
 make test-changed-zones  # the CI fan-out rules
+make test-supersede      # which waiting runs may be cancelled
 make changed-zones # which zones the last commit would plan
 make plan ZONE=x   # needs credentials
 ```
