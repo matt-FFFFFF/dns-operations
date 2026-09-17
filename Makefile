@@ -30,7 +30,7 @@ help: ## Show this help
 
 ## --- what CI runs -------------------------------------------------------
 
-check: fmt-check lint validate test test-fixtures test-changed-zones policy ## Everything a pull request must pass
+check: fmt-check lint validate test test-fixtures test-changed-zones test-supersede policy ## Everything a pull request must pass
 	@$(TF) -chdir=terraform init -backend=false -input=false >/dev/null
 	@$(TF) -chdir=terraform validate
 	@$(MAKE) --no-print-directory render-diff
@@ -141,7 +141,7 @@ build:
 # Each fixture zone under tools/tests/zones breaks one thing on purpose.
 FIXTURES := --zones tools/tests/zones --no-codeowners --today 2026-09-17
 
-.PHONY: test-fixtures test-fixtures-update test-changed-zones
+.PHONY: test-fixtures test-fixtures-update test-changed-zones test-supersede
 test-fixtures: | build ## Check dnsctl still rejects what it is supposed to reject
 	@$(DNSCTL) validate $(FIXTURES) > build/fixtures.txt 2>&1 || true
 	@if diff -u tools/tests/expected.txt build/fixtures.txt; then \
@@ -153,6 +153,9 @@ test-fixtures: | build ## Check dnsctl still rejects what it is supposed to reje
 
 test-changed-zones: ## Check the matrix fan-out rules still hold
 	@./tools/tests/changed-zones.sh
+
+test-supersede: ## Check which waiting runs may be cancelled
+	@./tools/tests/supersede-waiting.sh
 
 changed-zones: ## Which zones would CI plan for the last commit?
 	@./tools/changed-zones.sh --base HEAD~1

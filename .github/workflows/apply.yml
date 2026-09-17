@@ -35,6 +35,9 @@ jobs:
 
   discover:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write        # to cancel an earlier run stuck at the gate
     outputs:
       zones: ${{ steps.zones.outputs.zones }}
       any: ${{ steps.zones.outputs.any }}
@@ -49,6 +52,21 @@ jobs:
         env:
           BASE: ${{ github.event.before }}
         run: ./tools/changed-zones.sh --base "$BASE"
+
+      # An earlier run still at the approval gate holds dns-<zone>, so this one
+      # would queue behind it reporting that it waits on a job that looks like
+      # itself. That run is also planning an older commit. Cancel it -- but
+      # only when this run covers every zone it is still waiting on, because
+      # the API cancels whole runs and dropping a zone here would drop a
+      # merged change silently.
+      - name: Supersede earlier runs stuck at the approval gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./tools/supersede-waiting.sh \
+            --zones '${{ steps.zones.outputs.zones }}' \
+            --run-id '${{ github.run_id }}' \
+            --repo '${{ github.repository }}'
 
   apply:
     needs: [check, discover]
